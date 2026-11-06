@@ -27,14 +27,19 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.SequenceInputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 import org.mpxj.MPXJException;
+import org.mpxj.common.UnmarshalHelper;
 import org.mpxj.conceptdraw.ConceptDrawProjectReader;
 import org.mpxj.mspdi.MSPDIReader;
 import org.mpxj.primavera.PrimaveraPMFileReader;
 import org.mpxj.reader.ProjectReader;
+import org.xml.sax.InputSource;
 import org.xml.sax.SAXParseException;
+import org.xml.sax.XMLReader;
+import org.xml.sax.helpers.DefaultHandler;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -72,12 +77,23 @@ public class XmlReadFailureTest
    }
 
    /**
-    * A ConceptDraw file holding a byte which is not valid UTF-8.
+    * A ConceptDraw file holding a byte which is not valid UTF-8. The JDK's parser reports this
+    * differently between versions: Java 8 throws the IOException itself, later versions a
+    * SAXParseException. Either way the reader should throw what the parser throws.
     */
-   @Test public void testConceptDrawInvalidUtf8()
+   @Test public void testConceptDrawInvalidUtf8() throws Exception
    {
-      InputStream invalid = new ByteArrayInputStream(new byte[] { (byte) 0xFF });
-      assertParseFailure(new ConceptDrawProjectReader(), new SequenceInputStream(text("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Document>\n<Name>"), invalid));
+      byte[] start = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Document>\n<Name>".getBytes(StandardCharsets.UTF_8);
+      byte[] content = Arrays.copyOf(start, start.length + 1);
+      content[start.length] = (byte) 0xFF;
+
+      // A handler of its own stops the parser printing the error as well as throwing it
+      XMLReader parser = UnmarshalHelper.createXmlReader();
+      parser.setErrorHandler(new DefaultHandler());
+      Exception expected = assertThrows(Exception.class, () -> parser.parse(new InputSource(new ByteArrayInputStream(content))));
+      MPXJException ex = assertThrows(MPXJException.class, () -> new ConceptDrawProjectReader().read(new ByteArrayInputStream(content)));
+      assertEquals(expected.getClass(), ex.getCause().getClass());
+      assertEquals(expected.getMessage(), ex.getCause().getMessage());
    }
 
    /**
